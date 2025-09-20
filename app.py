@@ -99,7 +99,7 @@ CORS(app, resources={
             "http://localhost:3000",
 
             # Production frontend (Vercel)
-            "https://womencare-frontend.onrender.com"
+            "https://womencare-frontend-so5o.onrender.com"
         ],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"]
@@ -116,7 +116,7 @@ socketio = SocketIO(app, cors_allowed_origins=[
     "http://localhost:3000",
 
     # Production frontend
-    "https://womencare-frontend.onrender.com"
+    "https://womencare-frontend-so5o.onrender.com"
 ])
 
 # Test root route to confirm server is running
