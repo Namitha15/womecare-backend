@@ -99,7 +99,7 @@ CORS(app, resources={
             "http://localhost:3000",
 
             # Production frontend (Vercel)
-            "https://womencare-frontend.onrender.com"
+            "https://womencare-frontend-so5o.onrender.com"
         ],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"]
@@ -116,7 +116,7 @@ socketio = SocketIO(app, cors_allowed_origins=[
     "http://localhost:3000",
 
     # Production frontend
-    "https://womencare-frontend.onrender.com"
+    "https://womencare-frontend-so5o.onrender.com"
 ])
 
 # Test root route to confirm server is running
@@ -973,6 +973,33 @@ def get_dashboard(user_id):
         return jsonify({'error': f'Error fetching dashboard data: {str(e)}'}), 500
 
 # --- Location and SOS Endpoints ---
+@app.route('/api/location/<int:user_id>/track', methods=['POST'])
+def start_location_tracking(user_id):
+    """Initialize location tracking for a user."""
+    try:
+        data = request.get_json() or {}
+        user = db.session.get(User, user_id)
+        if not user:
+            logger.warning(f"User not found for location tracking: ID {user_id}")
+            return jsonify({'error': 'User not found'}), 404
+
+        interval = data.get('interval', 30)  # seconds
+        high_accuracy = data.get('high_accuracy', True)
+        
+        logger.info(f"Location tracking initialized for user {user_id}: interval={interval}s, high_accuracy={high_accuracy}")
+        
+        return jsonify({
+            'message': 'Location tracking initialized',
+            'user_id': user_id,
+            'interval': interval,
+            'high_accuracy': high_accuracy,
+            'status': 'ready'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Location tracking initialization error for user {user_id}: {str(e)}")
+        return jsonify({'error': f'Error initializing location tracking: {str(e)}'}), 500
+
 @app.route('/api/location/<int:user_id>/live', methods=['POST'])
 def update_live_location(user_id):
     try:
@@ -1162,6 +1189,71 @@ def get_period_history(user_id):
     except Exception as e:
         logger.error(f"Period history error for user {user_id}: {str(e)}")
         return jsonify({'error': f'Error fetching period history: {str(e)}'}), 500
+
+@app.route('/api/period-tracker/<int:user_id>/predict', methods=['GET'])
+def predict_next_period(user_id):
+    """Predict the next period date based on historical data."""
+    try:
+        periods = db.session.query(PeriodTracker).filter_by(user_id=user_id).order_by(PeriodTracker.cycle_start_date.desc()).limit(6).all()
+        
+        if len(periods) < 2:
+            return jsonify({'error': 'Need at least 2 period entries to make predictions'}), 400
+        
+        # Calculate average cycle length from recent periods
+        cycle_lengths = []
+        for i in range(len(periods) - 1):
+            current_period = periods[i]
+            previous_period = periods[i + 1]
+            
+            # Calculate days between cycle start dates
+            days_between = (current_period.cycle_start_date - previous_period.cycle_start_date).days
+            # Filter out unrealistic cycle lengths (less than 21 or more than 35 days)
+            if 21 <= days_between <= 35:  # Valid cycle length range
+                cycle_lengths.append(days_between)
+        
+        if not cycle_lengths:
+            # If no valid cycle lengths found, use the cycle_length field from the most recent period
+            if periods[0].cycle_length and 21 <= periods[0].cycle_length <= 35:
+                average_cycle_length = periods[0].cycle_length
+            else:
+                average_cycle_length = 28  # Default cycle length
+        else:
+            # Use average cycle length, rounded to nearest integer
+            average_cycle_length = round(sum(cycle_lengths) / len(cycle_lengths))
+        
+        # Get the most recent period start date
+        last_period_date = periods[0].cycle_start_date
+        
+        # Calculate next period date
+        next_period_date = last_period_date + timedelta(days=average_cycle_length)
+        
+        # Calculate days until next period
+        today = datetime.now(UTC).date()
+        days_until_next = (next_period_date - today).days
+        
+        # Create prediction message
+        if days_until_next > 0:
+            message = f"Your next period is predicted to start in {days_until_next} days"
+        elif days_until_next == 0:
+            message = "Your next period is predicted to start today"
+        else:
+            message = f"Your next period was predicted to start {abs(days_until_next)} days ago"
+        
+        logger.info(f"Period prediction for user {user_id}: next period on {next_period_date}, cycle length {average_cycle_length}, days until: {days_until_next}")
+        
+        return jsonify({
+            'predicted_date': next_period_date.isoformat(),
+            'average_cycle_length': average_cycle_length,
+            'message': message,
+            'days_until_next': days_until_next,
+            'cycle_lengths_used': cycle_lengths,
+            'last_period_date': last_period_date.isoformat(),
+            'prediction_accuracy': 'high' if len(cycle_lengths) >= 3 else 'medium' if len(cycle_lengths) >= 2 else 'low'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Period prediction error for user {user_id}: {str(e)}")
+        return jsonify({'error': f'Error predicting next period: {str(e)}'}), 500
 
 # --- Maternity Suite Endpoints ---
 @app.route('/api/maternity/<int:user_id>/start', methods=['POST'])
