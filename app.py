@@ -96,17 +96,14 @@ from flask_cors import CORS
 CORS(app, resources={
     r"/api/*": {
         "origins": [
-            # Local development
             "http://localhost:8501",
             "http://127.0.0.1:8501",
             "http://localhost:3000",
-
-            # Production frontend (Vercel)
             "https://womencare-frontend-so5o.onrender.com"
         ],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": True  # important for cookies/auth
+        "supports_credentials": True
     }
 })
 
@@ -1125,8 +1122,6 @@ def trigger_sos(user_id):
         logger.error(f"SOS trigger error for user {user.id}: {str(e)}")
         return jsonify({'error': f'Error triggering SOS: {str(e)}'}), 500
 
-# --- Period Tracker Endpoints ---
-
 # --- Log period ---
 @app.route('/api/period-tracker/<int:user_id>/log', methods=['POST', 'OPTIONS'])
 def log_period(user_id):
@@ -1147,8 +1142,8 @@ def log_period(user_id):
         period_log = PeriodTracker(
             user_id=user_id,
             cycle_start_date=datetime.strptime(data['cycle_start_date'], '%Y-%m-%d').date(),
-            cycle_length=data.get('cycle_length', 28),
-            period_length=data.get('period_length', 5),
+            cycle_length=data.get('cycle_length'),
+            period_length=data.get('period_length'),
             flow_intensity=data.get('flow_intensity'),
             symptoms=data.get('symptoms'),
             mood=data.get('mood'),
@@ -1191,11 +1186,10 @@ def get_period_history(user_id):
         return jsonify({'error': f'Error fetching period history: {str(e)}'}), 500
 
 
-# --- Predict next period ---
+# --- Predict next period (old logic, avg of last 2-3 cycles) ---
 @app.route('/api/period-tracker/<int:user_id>/predict', methods=['GET', 'OPTIONS'])
-def predict_period(user_id):
+def get_period_prediction(user_id):
     if request.method == 'OPTIONS':
-        # Handle preflight request
         response = make_response()
         response.headers.add("Access-Control-Allow-Origin", "https://womencare-frontend-so5o.onrender.com")
         response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
@@ -1204,25 +1198,31 @@ def predict_period(user_id):
         return response
 
     try:
-        # Example prediction logic:
-        last_period = db.session.query(PeriodTracker).filter_by(user_id=user_id).order_by(PeriodTracker.cycle_start_date.desc()).first()
-        if not last_period:
-            return jsonify({'error': 'No period logs found for prediction'}), 404
+        periods = db.session.query(PeriodTracker).filter_by(user_id=user_id).order_by(PeriodTracker.cycle_start_date.desc()).limit(3).all()
 
-        next_period_start = last_period.cycle_start_date + timedelta(days=last_period.cycle_length)
-        fertile_start = next_period_start - timedelta(days=10)
-        fertile_end = next_period_start - timedelta(days=5)
+        if len(periods) < 2:
+            return jsonify({'message': 'Log at least 2 periods to get a prediction.'}), 404
 
-        prediction = {
-            'user_id': user_id,
-            'next_period_start': next_period_start.isoformat(),
-            'fertile_window': [fertile_start.isoformat(), fertile_end.isoformat()]
-        }
+        cycle_lengths = []
+        for i in range(len(periods) - 1):
+            cycle_duration = (periods[i].cycle_start_date - periods[i+1].cycle_start_date).days
+            if cycle_duration > 0:
+                cycle_lengths.append(cycle_duration)
 
-        return jsonify(prediction), 200
+        if not cycle_lengths:
+            return jsonify({'message': 'Not enough data to calculate a reliable cycle length for prediction.'}), 404
 
+        average_cycle_length = sum(cycle_lengths) / len(cycle_lengths)
+        last_period_start = periods[0].cycle_start_date
+        predicted_next_period_date = last_period_start + timedelta(days=round(average_cycle_length))
+
+        return jsonify({
+            'predicted_date': predicted_next_period_date.isoformat(),
+            'average_cycle_length': round(average_cycle_length, 1),
+            'message': 'Prediction successful'
+        }), 200
     except Exception as e:
-        return jsonify({'error': f'Prediction failed: {str(e)}'}), 500
+        return jsonify({'error': f'Error generating period prediction: {str(e)}'}), 500
 
 # --- Maternity Suite Endpoints ---
 @app.route('/api/maternity/<int:user_id>/start', methods=['POST'])
