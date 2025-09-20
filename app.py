@@ -1214,7 +1214,6 @@ def get_period_history(user_id):
     except Exception as e:
         return jsonify({'error': f'Error fetching period history: {str(e)}'}), 500
 
-<<<<<<< HEAD
 @app.route('/api/period-tracker/<int:user_id>/predict', methods=['GET'])
 def predict_next_period(user_id):
     """Predict the next period date based on historical data."""
