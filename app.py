@@ -530,8 +530,8 @@ def create_location_map(latitude, longitude, user_name, accuracy=None):
 def send_emergency_email(email, user_name, message, latitude=None, longitude=None, accuracy=None):
     try:
         if not all([EMAIL_CONFIG['user'], EMAIL_CONFIG['password']]):
-            logger.warning("Email credentials not configured")
-            return
+            logger.warning("Email credentials not configured - EMAIL_USER or EMAIL_PASSWORD missing")
+            return False
 
         msg = MIMEMultipart('alternative')
         msg['Subject'] = f'🚨 EMERGENCY ALERT - {user_name}'
@@ -619,8 +619,10 @@ def send_emergency_email(email, user_name, message, latitude=None, longitude=Non
             server.send_message(msg)
 
         logger.info(f"Emergency email sent to {email}")
+        return True
     except Exception as e:
         logger.error(f"Failed to send email to {email}: {str(e)}")
+        return False
 
 def send_emergency_sms(phone, user_name, message, latitude=None, longitude=None, accuracy=None):
     try:
@@ -1113,24 +1115,39 @@ def trigger_sos(user_id):
         for contact in contacts:
             try:
                 notified = False
+                notification_methods = []
+                
                 if contact.phone and all(TWILIO_CONFIG.values()):
-                    send_emergency_sms(
+                    sms_success = send_emergency_sms(
                         contact.phone,
                         user.name,
                         sos_alert.message,
                         **sos_alert_location_data
                     )
-                    notified = True
+                    if sms_success:
+                        notification_methods.append('SMS')
+                        notified = True
+                
                 if contact.email and all([EMAIL_CONFIG['user'], EMAIL_CONFIG['password']]):
-                    send_emergency_email(
+                    email_success = send_emergency_email(
                         contact.email,
                         user.name,
                         sos_alert.message,
                         **sos_alert_location_data
                     )
-                    notified = True
+                    if email_success:
+                        notification_methods.append('Email')
+                        notified = True
+                
                 if notified:
-                    notifications.append({'name': contact.name, 'type': contact.__class__.__name__.lower()})
+                    notifications.append({
+                        'name': contact.name, 
+                        'type': contact.__class__.__name__.lower(),
+                        'methods': notification_methods
+                    })
+                else:
+                    errors.append(f"No notification methods available for {contact.name}")
+                    
             except Exception as e:
                 errors.append(f"Failed to notify {contact.name}: {str(e)}")
                 logger.error(f"Notification error for {contact.name}: {str(e)}")
@@ -1216,14 +1233,14 @@ def get_period_history(user_id):
 
 @app.route('/api/period-tracker/<int:user_id>/predict', methods=['GET'])
 def predict_next_period(user_id):
-    """Predict the next period date based on historical data."""
+    """Predict the next period date based on historical data with improved algorithm."""
     try:
-        periods = db.session.query(PeriodTracker).filter_by(user_id=user_id).order_by(PeriodTracker.cycle_start_date.desc()).limit(6).all()
+        periods = db.session.query(PeriodTracker).filter_by(user_id=user_id).order_by(PeriodTracker.cycle_start_date.desc()).limit(12).all()
         
         if len(periods) < 2:
             return jsonify({'error': 'Need at least 2 period entries to make predictions'}), 400
         
-        # Calculate average cycle length from recent periods
+        # Calculate cycle lengths from historical data
         cycle_lengths = []
         for i in range(len(periods) - 1):
             current_period = periods[i]
@@ -1231,19 +1248,36 @@ def predict_next_period(user_id):
             
             # Calculate days between cycle start dates
             days_between = (current_period.cycle_start_date - previous_period.cycle_start_date).days
-            # Filter out unrealistic cycle lengths (less than 21 or more than 35 days)
-            if 21 <= days_between <= 35:  # Valid cycle length range
+            
+            # More realistic cycle length range (20-40 days)
+            if 20 <= days_between <= 40:
                 cycle_lengths.append(days_between)
         
+        # If no valid cycle lengths from date differences, use stored cycle_length values
         if not cycle_lengths:
-            # If no valid cycle lengths found, use the cycle_length field from the most recent period
-            if periods[0].cycle_length and 21 <= periods[0].cycle_length <= 35:
-                average_cycle_length = periods[0].cycle_length
-            else:
-                average_cycle_length = 28  # Default cycle length
+            stored_cycles = [p.cycle_length for p in periods if p.cycle_length and 20 <= p.cycle_length <= 40]
+            if stored_cycles:
+                cycle_lengths = stored_cycles[:6]  # Use up to 6 most recent stored cycles
+        
+        if not cycle_lengths:
+            # Fallback to default
+            average_cycle_length = 28
+            prediction_accuracy = 'low'
         else:
-            # Use average cycle length, rounded to nearest integer
-            average_cycle_length = round(sum(cycle_lengths) / len(cycle_lengths))
+            # Use weighted average (more recent cycles have higher weight)
+            if len(cycle_lengths) >= 3:
+                # Weighted average: most recent = 3x, second = 2x, others = 1x
+                weights = [3, 2] + [1] * (len(cycle_lengths) - 2)
+                weighted_sum = sum(cycle * weight for cycle, weight in zip(cycle_lengths, weights))
+                total_weight = sum(weights)
+                average_cycle_length = round(weighted_sum / total_weight)
+                prediction_accuracy = 'high'
+            elif len(cycle_lengths) == 2:
+                average_cycle_length = round(sum(cycle_lengths) / len(cycle_lengths))
+                prediction_accuracy = 'medium'
+            else:
+                average_cycle_length = cycle_lengths[0]
+                prediction_accuracy = 'low'
         
         # Get the most recent period start date
         last_period_date = periods[0].cycle_start_date
@@ -1255,15 +1289,51 @@ def predict_next_period(user_id):
         today = datetime.now(UTC).date()
         days_until_next = (next_period_date - today).days
         
-        # Create prediction message
+        # Create detailed prediction message
         if days_until_next > 0:
-            message = f"Your next period is predicted to start in {days_until_next} days"
+            if days_until_next == 1:
+                message = "Your next period is predicted to start tomorrow"
+            elif days_until_next <= 7:
+                message = f"Your next period is predicted to start in {days_until_next} days"
+            else:
+                weeks = days_until_next // 7
+                days = days_until_next % 7
+                if weeks > 0 and days > 0:
+                    message = f"Your next period is predicted to start in {weeks} week{'s' if weeks > 1 else ''} and {days} day{'s' if days > 1 else ''}"
+                elif weeks > 0:
+                    message = f"Your next period is predicted to start in {weeks} week{'s' if weeks > 1 else ''}"
+                else:
+                    message = f"Your next period is predicted to start in {days_until_next} days"
         elif days_until_next == 0:
             message = "Your next period is predicted to start today"
         else:
-            message = f"Your next period was predicted to start {abs(days_until_next)} days ago"
+            overdue_days = abs(days_until_next)
+            if overdue_days == 1:
+                message = "Your next period was predicted to start yesterday"
+            elif overdue_days <= 7:
+                message = f"Your next period was predicted to start {overdue_days} days ago"
+            else:
+                weeks = overdue_days // 7
+                days = overdue_days % 7
+                if weeks > 0 and days > 0:
+                    message = f"Your next period was predicted to start {weeks} week{'s' if weeks > 1 else ''} and {days} day{'s' if days > 1 else ''} ago"
+                elif weeks > 0:
+                    message = f"Your next period was predicted to start {weeks} week{'s' if weeks > 1 else ''} ago"
+                else:
+                    message = f"Your next period was predicted to start {overdue_days} days ago"
         
-        logger.info(f"Period prediction for user {user_id}: next period on {next_period_date}, cycle length {average_cycle_length}, days until: {days_until_next}")
+        # Add cycle regularity info
+        if len(cycle_lengths) >= 3:
+            cycle_variance = max(cycle_lengths) - min(cycle_lengths)
+            if cycle_variance <= 3:
+                regularity = "very regular"
+            elif cycle_variance <= 7:
+                regularity = "regular"
+            else:
+                regularity = "irregular"
+            message += f" (Your cycle is {regularity})"
+        
+        logger.info(f"Period prediction for user {user_id}: next period on {next_period_date}, cycle length {average_cycle_length}, days until: {days_until_next}, accuracy: {prediction_accuracy}")
         
         return jsonify({
             'predicted_date': next_period_date.isoformat(),
@@ -1272,7 +1342,9 @@ def predict_next_period(user_id):
             'days_until_next': days_until_next,
             'cycle_lengths_used': cycle_lengths,
             'last_period_date': last_period_date.isoformat(),
-            'prediction_accuracy': 'high' if len(cycle_lengths) >= 3 else 'medium' if len(cycle_lengths) >= 2 else 'low'
+            'prediction_accuracy': prediction_accuracy,
+            'cycle_variance': max(cycle_lengths) - min(cycle_lengths) if len(cycle_lengths) >= 2 else 0,
+            'total_periods_analyzed': len(periods)
         }), 200
         
     except Exception as e:
