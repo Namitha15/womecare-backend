@@ -90,10 +90,12 @@ migrate = Migrate(app, db)
 # ---------------------------------------------------
 # Configure CORS
 # ---------------------------------------------------
+
+from flask_cors import CORS
+
 CORS(app, resources={
     r"/api/*": {
         "origins": [
-            # Local development
             "http://localhost:8501",
             "http://127.0.0.1:8501",
             "http://localhost:3000",
@@ -102,7 +104,8 @@ CORS(app, resources={
             "https://womencare-frontend-so5o.onrender.com"
         ],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
     }
 })
 
@@ -1148,9 +1151,18 @@ def trigger_sos(user_id):
         logger.error(f"SOS trigger error for user {user.id}: {str(e)}")
         return jsonify({'error': f'Error triggering SOS: {str(e)}'}), 500
 
-# --- Period Tracker Endpoints ---
-@app.route('/api/period-tracker/<int:user_id>/log', methods=['POST'])
+# --- Log period ---
+@app.route('/api/period-tracker/<int:user_id>/log', methods=['POST', 'OPTIONS'])
 def log_period(user_id):
+    if request.method == 'OPTIONS':
+        # Handle preflight request
+        response = make_response()
+        response.headers.add("Access-Control-Allow-Origin", "https://womencare-frontend-so5o.onrender.com")
+        response.headers.add("Access-Control-Allow-Methods", "POST, OPTIONS")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        response.headers.add("Access-Control-Allow-Credentials", "true")
+        return response
+
     try:
         data = request.get_json()
         if not data or 'cycle_start_date' not in data:
@@ -1171,25 +1183,38 @@ def log_period(user_id):
         return jsonify({'message': 'Period logged successfully', 'log_id': period_log.id}), 201
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Failed to log period for user {user_id}: {str(e)}")
         return jsonify({'error': f'Failed to log period: {str(e)}'}), 500
 
-@app.route('/api/period-tracker/<int:user_id>/history', methods=['GET'])
+
+# --- Get period history ---
+@app.route('/api/period-tracker/<int:user_id>/history', methods=['GET', 'OPTIONS'])
 def get_period_history(user_id):
+    if request.method == 'OPTIONS':
+        response = make_response()
+        response.headers.add("Access-Control-Allow-Origin", "https://womencare-frontend-so5o.onrender.com")
+        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        response.headers.add("Access-Control-Allow-Credentials", "true")
+        return response
+
     try:
         periods = db.session.query(PeriodTracker).filter_by(user_id=user_id).order_by(PeriodTracker.cycle_start_date.desc()).all()
-
         return jsonify({
             'periods': [{
-                'id': p.id, 'cycle_start_date': p.cycle_start_date.isoformat(), 'cycle_length': p.cycle_length,
-                'period_length': p.period_length, 'flow_intensity': p.flow_intensity, 'symptoms': p.symptoms,
-                'mood': p.mood, 'notes': p.notes
+                'id': p.id,
+                'cycle_start_date': p.cycle_start_date.isoformat(),
+                'cycle_length': p.cycle_length,
+                'period_length': p.period_length,
+                'flow_intensity': p.flow_intensity,
+                'symptoms': p.symptoms,
+                'mood': p.mood,
+                'notes': p.notes
             } for p in periods]
         }), 200
     except Exception as e:
-        logger.error(f"Period history error for user {user_id}: {str(e)}")
         return jsonify({'error': f'Error fetching period history: {str(e)}'}), 500
 
+<<<<<<< HEAD
 @app.route('/api/period-tracker/<int:user_id>/predict', methods=['GET'])
 def predict_next_period(user_id):
     """Predict the next period date based on historical data."""
