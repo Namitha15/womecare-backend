@@ -628,7 +628,7 @@ def send_emergency_sms(phone, user_name, message, latitude=None, longitude=None,
     try:
         if not all(TWILIO_CONFIG.values()):
             logger.warning("Twilio credentials not configured")
-            return
+            return False  # return False to indicate SMS not sent
 
         location_text = f"\nLocation: https://www.google.com/maps/search/?api=1&query={latitude},{longitude}" if latitude and longitude else ""
         sms_message = f'EMERGENCY: {user_name} needs help! {message}{location_text}'
@@ -640,8 +640,15 @@ def send_emergency_sms(phone, user_name, message, latitude=None, longitude=None,
             to=phone
         )
         logger.info(f"SMS sent to {phone}")
+        return True
+    except RecursionError as re:
+        # explicit handling so recursion errors are clearly logged and do not crash the caller
+        logger.error(f"Recursion error while sending SMS to {phone}: {str(re)}")
+        return False
     except Exception as e:
         logger.error(f"Failed to send SMS to {phone}: {str(e)}")
+        return False
+
 
 # --- API Endpoints ---
 
@@ -1117,17 +1124,6 @@ def trigger_sos(user_id):
                 notified = False
                 notification_methods = []
                 
-                if contact.phone and all(TWILIO_CONFIG.values()):
-                    sms_success = send_emergency_sms(
-                        contact.phone,
-                        user.name,
-                        sos_alert.message,
-                        **sos_alert_location_data
-                    )
-                    if sms_success:
-                        notification_methods.append('SMS')
-                        notified = True
-                
                 if contact.email and all([EMAIL_CONFIG['user'], EMAIL_CONFIG['password']]):
                     email_success = send_emergency_email(
                         contact.email,
@@ -1138,6 +1134,19 @@ def trigger_sos(user_id):
                     if email_success:
                         notification_methods.append('Email')
                         notified = True
+                
+                if not notified and contact.phone and all(TWILIO_CONFIG.values()):
+                    sms_success = send_emergency_sms(
+                        contact.phone,
+                        user.name,
+                        sos_alert.message,
+                        **sos_alert_location_data
+                    )
+                    if sms_success:
+                        notification_methods.append('SMS')
+                        notified = True
+                
+                
                 
                 if notified:
                     notifications.append({
