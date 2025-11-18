@@ -1,1 +1,1 @@
-web: python startup.py && gunicorn --worker-class gevent -w 1 app:app
+web: python startup.py && gunicorn -k sync -w 1 app:app
