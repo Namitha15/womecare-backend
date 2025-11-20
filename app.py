@@ -1193,7 +1193,7 @@ def log_period(user_id):
     if request.method == 'OPTIONS':
         # Handle preflight request
         response = make_response()
-        response.headers.add("Access-Control-Allow-Origin", "https://womencare-frontend-so5o.onrender.com")
+        response.headers.add("Access-Control-Allow-Origin", "https://womencare-frontend-3jdv.onrender.com")
         response.headers.add("Access-Control-Allow-Methods", "POST, OPTIONS")
         response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
         response.headers.add("Access-Control-Allow-Credentials", "true")
@@ -1227,7 +1227,7 @@ def log_period(user_id):
 def get_period_history(user_id):
     if request.method == 'OPTIONS':
         response = make_response()
-        response.headers.add("Access-Control-Allow-Origin", "https://womencare-frontend-so5o.onrender.com")
+        response.headers.add("Access-Control-Allow-Origin", "https://womencare-frontend-3jdv.onrender.com")
         response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
         response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
         response.headers.add("Access-Control-Allow-Credentials", "true")
