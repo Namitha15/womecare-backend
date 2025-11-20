@@ -13,6 +13,9 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
 
+import requests
+import base64
+
 import os
 from dotenv import load_dotenv
 import smtplib
@@ -539,14 +542,9 @@ def create_location_map(latitude, longitude, user_name, accuracy=None):
 
 def send_emergency_email(email, user_name, message, latitude=None, longitude=None, accuracy=None):
     try:
-        if not all([EMAIL_CONFIG['user'], EMAIL_CONFIG['password']]):
-            logger.warning("Email credentials not configured - EMAIL_USER or EMAIL_PASSWORD missing")
+        if not RESEND_API_KEY:
+            logger.error("Resend API key missing!")
             return False
-
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = f'🚨 EMERGENCY ALERT - {user_name}'
-        msg['From'] = EMAIL_CONFIG['user']
-        msg['To'] = email
 
         current_time = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
         address_info = get_detailed_address(latitude, longitude)['full_address'] if latitude and longitude else ""
@@ -554,19 +552,12 @@ def send_emergency_email(email, user_name, message, latitude=None, longitude=Non
         maps_directions = f"https://www.google.com/maps/dir/?api=1&destination={latitude},{longitude}" if latitude and longitude else ""
         accuracy_info = f"Accuracy: {get_accuracy_description(accuracy)}" if accuracy else ""
 
+        # ---------- SAME HTML ----------
         html_content = f"""
         <!DOCTYPE html>
         <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .alert-box {{ background: #ffe6e6; border: 2px solid #ff4444; padding: 15px; border-radius: 8px; }}
-                .map-link {{ display: inline-block; background: #007bff; color: white; padding: 10px; text-decoration: none; border-radius: 5px; margin: 10px; }}
-                .emergency-info {{ background: #e9ecef; padding: 15px; border-radius: 8px; margin: 15px 0; }}
-            </style>
-        </head>
         <body>
-            <div class="alert-box">
+            <div style="background:#ffe6e6;padding:15px;border-radius:8px;border:2px solid #ff4444;">
                 <h2>🚨 EMERGENCY ALERT: {user_name}</h2>
                 <p><strong>Time:</strong> {current_time}</p>
                 <p><strong>Message:</strong> {message}</p>
@@ -575,12 +566,13 @@ def send_emergency_email(email, user_name, message, latitude=None, longitude=Non
                 {"<p>Longitude: " + str(longitude) + "</p>" if longitude else ""}
                 {"<p>Address: " + address_info + "</p>" if address_info else ""}
                 {"<p>" + accuracy_info + "</p>" if accuracy_info else ""}
-                {"<div style='text-align: center;'>" if latitude and longitude else ""}
-                {"<a href='" + maps_link + "' class='map-link'>View on Google Maps</a>" if maps_link else ""}
-                {"<a href='" + maps_directions + "' class='map-link'>Get Directions</a>" if maps_directions else ""}
+                {"<div style='text-align:center;'>" if latitude and longitude else ""}
+                {"<a href='" + maps_link + "' style='background:#007bff;color:white;padding:10px;border-radius:5px;text-decoration:none;margin:10px;'>View on Google Maps</a>" if maps_link else ""}
+                {"<a href='" + maps_directions + "' style='background:#007bff;color:white;padding:10px;border-radius:5px;text-decoration:none;margin:10px;'>Get Directions</a>" if maps_directions else ""}
                 {"</div>" if latitude and longitude else ""}
             </div>
-            <div class="emergency-info">
+
+            <div style="background:#e9ecef;padding:15px;border-radius:8px;margin-top:20px;">
                 <h3>🆘 WHAT TO DO:</h3>
                 <ol>
                     <li>Call {user_name} immediately</li>
@@ -592,18 +584,17 @@ def send_emergency_email(email, user_name, message, latitude=None, longitude=Non
                             <li>Women Helpline: 1091</li>
                         </ul>
                     </li>
-                    <li>Use location links to reach them</li>
                 </ol>
             </div>
         </body>
         </html>
         """
 
+        # ---------- SAME TEXT ----------
         text_content = f"""
         EMERGENCY ALERT: {user_name}
         Time: {current_time}
         Message: {message}
-        {'Location:' if latitude and longitude else ''}
         {f'Latitude: {latitude}' if latitude else ''}
         {f'Longitude: {longitude}' if longitude else ''}
         {f'Address: {address_info}' if address_info else ''}
@@ -611,28 +602,48 @@ def send_emergency_email(email, user_name, message, latitude=None, longitude=Non
         {maps_link}
         """
 
-        msg.attach(MIMEText(text_content, 'plain'))
-        msg.attach(MIMEText(html_content, 'html'))
-
+        # ---------- Map Attachment ----------
+        attachments = []
         map_path = create_location_map(latitude, longitude, user_name, accuracy) if latitude and longitude else None
         if map_path and os.path.exists(map_path):
-            with open(map_path, 'rb') as attachment:
-                part = MIMEBase('application', 'octet-stream')
-                part.set_payload(attachment.read())
-            encoders.encode_base64(part)
-            part.add_header('Content-Disposition', f'attachment; filename={os.path.basename(map_path)}')
-            msg.attach(part)
+            with open(map_path, "rb") as f:
+                encoded = base64.b64encode(f.read()).decode()
+                attachments.append({
+                    "content": encoded,
+                    "filename": os.path.basename(map_path),
+                    "type": "image/png"
+                })
 
-        with smtplib.SMTP(EMAIL_CONFIG['server'], EMAIL_CONFIG['port']) as server:
-            server.starttls()
-            server.login(EMAIL_CONFIG['user'], EMAIL_CONFIG['password'])
-            server.send_message(msg)
+        # ---------- Resend Email Request ----------
+        payload = {
+            "from": RESEND_FROM,
+            "to": [email],
+            "subject": f"🚨 EMERGENCY ALERT - {user_name}",
+            "html": html_content,
+            "text": text_content,
+            "attachments": attachments
+        }
 
-        logger.info(f"Emergency email sent to {email}")
-        return True
+        response = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json=payload
+        )
+
+        if response.status_code == 200:
+            logger.info(f"SOS Email sent via Resend → {email}")
+            return True
+        else:
+            logger.error(f"Resend Error: {response.text}")
+            return False
+
     except Exception as e:
-        logger.error(f"Failed to send email to {email}: {str(e)}")
+        logger.error(f"Resend failed: {str(e)}")
         return False
+
 
 def send_emergency_sms(phone, user_name, message, latitude=None, longitude=None, accuracy=None):
     try:
