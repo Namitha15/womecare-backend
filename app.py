@@ -155,6 +155,10 @@ EMAIL_CONFIG = {
     'port': int(os.getenv('SMTP_PORT', 587))
 }
 
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+RESEND_FROM = os.getenv("RESEND_FROM", "WomenCare <noreply@your-domain.com>")
+
+
 Maps_API_KEY = os.getenv('Maps_API_KEY')
 
 # --- Database Models ---
@@ -544,6 +548,9 @@ def create_location_map(latitude, longitude, user_name, accuracy=None):
 
 def send_emergency_email(email, user_name, message, latitude=None, longitude=None, accuracy=None):
     try:
+        RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+        RESEND_FROM = os.getenv("RESEND_FROM")
+
         if not RESEND_API_KEY:
             logger.error("Resend API key missing!")
             return False
