@@ -123,6 +123,15 @@ socketio = SocketIO(app, cors_allowed_origins=[
     "https://womencare-frontend-3jdv.onrender.com"
 ])
 
+# Request logging middleware
+@app.before_request
+def log_request_info():
+    """Log all incoming requests for debugging"""
+    logger.info(f"Request: {request.method} {request.path} from {request.remote_addr}")
+    logger.debug(f"Headers: {dict(request.headers)}")
+    if request.is_json:
+        logger.debug(f"JSON Body: {request.get_json()}")
+
 # Test root route to confirm server is running
 @app.route("/", methods=["GET"])
 def home():
@@ -1726,15 +1735,51 @@ def get_location_history(user_id):
         return jsonify({'error': f'Error fetching location history: {str(e)}'}), 500
         
 
+# --- Catch-all route for undefined paths ---
+@app.route('/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
+def catch_all(path):
+    """Catch-all route for undefined paths with detailed logging"""
+    logger.warning(f"404 - Catch-all route hit: {request.method} {request.url}")
+    logger.warning(f"404 - Path: {path}, Full URL: {request.url}, Origin: {request.headers.get('Origin', 'N/A')}")
+    
+    # Handle OPTIONS requests for CORS preflight
+    if request.method == 'OPTIONS':
+        return make_response('', 200)
+    
+    # Return 404 with helpful information
+    return jsonify({
+        'error': 'Route not found',
+        'message': f'The route {request.method} /{path} was not found',
+        'available_routes': [
+            '/api/health',
+            '/api/users',
+            '/api/login',
+            '/api/dashboard/<user_id>',
+            '/api/sos/<user_id>',
+            '/api/location/<user_id>/live',
+            '/api/emergency-contacts/<user_id>',
+            '/api/period-tracker/<user_id>/log',
+            '/api/maternity/<user_id>/start',
+            '/api/community/posts'
+        ]
+    }), 404
+
 # --- Error Handlers ---
 @app.errorhandler(404)
 def not_found(error):
     logger.warning(f"404 error: {str(error)} - Requested URL: {request.url}")
-    return jsonify({'error': 'Resource not found'}), 404
+    logger.warning(f"404 - Method: {request.method}, Path: {request.path}, Origin: {request.headers.get('Origin', 'N/A')}")
+    return jsonify({
+        'error': 'Resource not found',
+        'message': 'The requested resource was not found on this server',
+        'url': request.url,
+        'method': request.method
+    }), 404
 
 @app.errorhandler(500)
 def server_error(error):
     logger.error(f"500 error: {str(error)} - Requested URL: {request.url}")
+    logger.error(f"500 - Method: {request.method}, Path: {request.path}")
     return jsonify({'error': 'Internal server error'}), 500
 
 # --- Main Execution ---
