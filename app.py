@@ -13,6 +13,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
 
+from resend import Emails
+
 import requests
 import base64
 
