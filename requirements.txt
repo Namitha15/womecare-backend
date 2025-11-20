@@ -88,7 +88,8 @@ python-engineio==4.9.1
 flask-migrate==4.0.7
 
 gevent==24.2.1
-resend==0.10.0
+resend==2.19.0
+
 
 
 
