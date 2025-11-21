@@ -611,19 +611,24 @@ def send_emergency_email(email, user_name, message, latitude=None, longitude=Non
         # ---------- SAME MAP ATTACHMENT ----------
         attachments = []
         map_path = create_location_map(latitude, longitude, user_name, accuracy) if latitude and longitude else None
-
         msg = MIMEMultipart("alternative")
         msg["Subject"] = f"🚨 EMERGENCY ALERT - {user_name}"
         msg["From"] = smtp_user
         msg["To"] = email
-
+        
         msg.attach(MIMEText(text_content, "plain"))
         msg.attach(MIMEText(html_content, "html"))
-
+        
+        
         if map_path and os.path.exists(map_path):
             with open(map_path, "rb") as f:
-                img = MIMEImage(f.read(), name=os.path.basename(map_path))
+                img = MIMEImage(f.read(), _subtype="png")
+                img.add_header(
+                    "Content-Disposition",
+                    f'attachment; filename="{os.path.basename(map_path)}"'
+                )
                 msg.attach(img)
+
 
         # ---------- SEND VIA BREVO SMTP ----------
         server = smtplib.SMTP(smtp_host, smtp_port)
