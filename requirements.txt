@@ -89,7 +89,7 @@ flask-migrate==4.0.7
 
 gevent==24.2.1
 resend==2.19.0
-sib_api_v3_sdk==7.6.0
+sib_api_v3_sdk
 
 
 
