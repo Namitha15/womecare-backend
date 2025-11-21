@@ -637,7 +637,7 @@ def send_emergency_email(email, user_name, message, latitude=None, longitude=Non
             json=payload
         )
 
-        if response.status_code == 200:
+        if response.status_code in [200, 202]:
             logger.info(f"SOS Email sent via Resend → {email}")
             return True
         else:
@@ -1148,8 +1148,7 @@ def trigger_sos(user_id):
             try:
                 notified = False
                 notification_methods = []
-                
-                if contact.email and all([EMAIL_CONFIG['user'], EMAIL_CONFIG['password']]):
+                if contact.email:
                     email_success = send_emergency_email(
                         contact.email,
                         user.name,
@@ -1159,6 +1158,7 @@ def trigger_sos(user_id):
                     if email_success:
                         notification_methods.append('Email')
                         notified = True
+
                 
                 if not notified and contact.phone and all(TWILIO_CONFIG.values()):
                     sms_success = send_emergency_sms(
