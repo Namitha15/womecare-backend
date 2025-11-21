@@ -590,7 +590,7 @@ def send_emergency_email(email, user_name, message, latitude=None, longitude=Non
                 attachment_data = base64.b64encode(f.read()).decode("utf-8")
 
         email_payload = sib_api_v3_sdk.SendSmtpEmail(
-            sender={"email": "womencare@smtp-brevo.com", "name": "WomenCare"},
+            sender={"email": os.getenv("BREVO_SENDER"), "name": "WomenCare"},
             to=[{"email": email}],
             subject=f"🚨 EMERGENCY ALERT - {user_name}",
             html_content=html_content,
