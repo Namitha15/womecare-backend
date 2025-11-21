@@ -32,6 +32,7 @@ import random
 from twilio.rest import Client
 from geopy.geocoders import Nominatim
 
+from email.mime.image import MIMEImage
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -149,9 +150,6 @@ TWILIO_CONFIG = {
 }
 
 
-
-RESEND_API_KEY = os.getenv("RESEND_API_KEY")
-RESEND_FROM = os.getenv("RESEND_FROM", "WomenCare <onboarding@resend.dev>")
 
 
 Maps_API_KEY = os.getenv('Maps_API_KEY')
@@ -543,14 +541,18 @@ def create_location_map(latitude, longitude, user_name, accuracy=None):
 
 def send_emergency_email(email, user_name, message, latitude=None, longitude=None, accuracy=None):
     try:
-        RESEND_API_KEY = os.getenv("RESEND_API_KEY")
-        RESEND_FROM = os.getenv("RESEND_FROM")
+        # Brevo SMTP Configuration
+        smtp_host = os.getenv("BREVO_SMTP_HOST", "smtp-relay.brevo.com")
+        smtp_port = int(os.getenv("BREVO_SMTP_PORT", 587))
+        smtp_user = os.getenv("BREVO_SMTP_USER")   # Your Brevo login email
+        smtp_pass = os.getenv("BREVO_SMTP_PASS")   # Your Brevo SMTP password
 
-        if not RESEND_API_KEY:
-            logger.error("Resend API key missing!")
+        if not smtp_user or not smtp_pass:
+            logger.error("Brevo SMTP credentials missing!")
             return False
 
         current_time = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
+
         address_info = get_detailed_address(latitude, longitude)['full_address'] if latitude and longitude else ""
         maps_link = f"https://www.google.com/maps/search/?api=1&query={latitude},{longitude}" if latitude and longitude else ""
         maps_directions = f"https://www.google.com/maps/dir/?api=1&destination={latitude},{longitude}" if latitude and longitude else ""
@@ -606,46 +608,35 @@ def send_emergency_email(email, user_name, message, latitude=None, longitude=Non
         {maps_link}
         """
 
-        # ---------- Map Attachment ----------
+        # ---------- SAME MAP ATTACHMENT ----------
         attachments = []
         map_path = create_location_map(latitude, longitude, user_name, accuracy) if latitude and longitude else None
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"🚨 EMERGENCY ALERT - {user_name}"
+        msg["From"] = smtp_user
+        msg["To"] = email
+
+        msg.attach(MIMEText(text_content, "plain"))
+        msg.attach(MIMEText(html_content, "html"))
+
         if map_path and os.path.exists(map_path):
             with open(map_path, "rb") as f:
-                encoded = base64.b64encode(f.read()).decode()
-                attachments.append({
-                    "content": encoded,
-                    "filename": os.path.basename(map_path),
-                    "type": "image/png"
-                })
+                img = MIMEImage(f.read(), name=os.path.basename(map_path))
+                msg.attach(img)
 
-        # ---------- Resend Email Request ----------
-        payload = {
-            "from": RESEND_FROM,
-            "to": [email],
-            "subject": f"🚨 EMERGENCY ALERT - {user_name}",
-            "html": html_content,
-            "text": text_content,
-            "attachments": attachments
-        }
+        # ---------- SEND VIA BREVO SMTP ----------
+        server = smtplib.SMTP(smtp_host, smtp_port)
+        server.starttls()
+        server.login(smtp_user, smtp_pass)
+        server.sendmail(smtp_user, [email], msg.as_string())
+        server.quit()
 
-        response = requests.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {RESEND_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json=payload
-        )
-
-        if response.status_code in [200, 202]:
-            logger.info(f"SOS Email sent via Resend → {email}")
-            return True
-        else:
-            logger.error(f"Resend Error: {response.text}")
-            return False
+        logger.info(f"SOS Email sent via Brevo SMTP → {email}")
+        return True
 
     except Exception as e:
-        logger.error(f"Resend failed: {str(e)}")
+        logger.error(f"Brevo SMTP Error: {str(e)}")
         return False
 
 
