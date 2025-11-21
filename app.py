@@ -1,6 +1,9 @@
 # app.py
 
 
+import sib_api_v3_sdk
+from sib_api_v3_sdk.rest import ApiException
+
 from flask import Flask, request, jsonify, make_response
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -539,110 +542,77 @@ def create_location_map(latitude, longitude, user_name, accuracy=None):
         logger.error(f"Map creation error: {str(e)}")
         return None
 
+
 def send_emergency_email(email, user_name, message, latitude=None, longitude=None, accuracy=None):
     try:
-        # Brevo SMTP Configuration
-        smtp_host = os.getenv("BREVO_SMTP_HOST", "smtp-relay.brevo.com")
-        smtp_port = int(os.getenv("BREVO_SMTP_PORT", 587))
-        smtp_user = os.getenv("BREVO_SMTP_USER")   # Your Brevo login email
-        smtp_pass = os.getenv("BREVO_SMTP_PASS")   # Your Brevo SMTP password
-
-        if not smtp_user or not smtp_pass:
-            logger.error("Brevo SMTP credentials missing!")
+        BREVO_API_KEY = os.getenv("BREVO_API_KEY")
+        if not BREVO_API_KEY:
+            logger.error("BREVO_API_KEY missing!")
             return False
 
-        current_time = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
+        # Brevo API Configuration
+        configuration = sib_api_v3_sdk.Configuration()
+        configuration.api_key['api-key'] = BREVO_API_KEY
+        api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
 
+        # TIME + LOCATION DETAILS
+        current_time = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
         address_info = get_detailed_address(latitude, longitude)['full_address'] if latitude and longitude else ""
         maps_link = f"https://www.google.com/maps/search/?api=1&query={latitude},{longitude}" if latitude and longitude else ""
         maps_directions = f"https://www.google.com/maps/dir/?api=1&destination={latitude},{longitude}" if latitude and longitude else ""
         accuracy_info = f"Accuracy: {get_accuracy_description(accuracy)}" if accuracy else ""
 
-        # ---------- SAME HTML ----------
+        # HTML EMAIL BODY
         html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <body>
-            <div style="background:#ffe6e6;padding:15px;border-radius:8px;border:2px solid #ff4444;">
-                <h2>🚨 EMERGENCY ALERT: {user_name}</h2>
-                <p><strong>Time:</strong> {current_time}</p>
-                <p><strong>Message:</strong> {message}</p>
-                {"<h3>Location</h3>" if latitude and longitude else ""}
-                {"<p>Latitude: " + str(latitude) + "</p>" if latitude else ""}
-                {"<p>Longitude: " + str(longitude) + "</p>" if longitude else ""}
-                {"<p>Address: " + address_info + "</p>" if address_info else ""}
-                {"<p>" + accuracy_info + "</p>" if accuracy_info else ""}
-                {"<div style='text-align:center;'>" if latitude and longitude else ""}
-                {"<a href='" + maps_link + "' style='background:#007bff;color:white;padding:10px;border-radius:5px;text-decoration:none;margin:10px;'>View on Google Maps</a>" if maps_link else ""}
-                {"<a href='" + maps_directions + "' style='background:#007bff;color:white;padding:10px;border-radius:5px;text-decoration:none;margin:10px;'>Get Directions</a>" if maps_directions else ""}
-                {"</div>" if latitude and longitude else ""}
-            </div>
-
-            <div style="background:#e9ecef;padding:15px;border-radius:8px;margin-top:20px;">
-                <h3>🆘 WHAT TO DO:</h3>
-                <ol>
-                    <li>Call {user_name} immediately</li>
-                    <li>If no response, contact emergency services:
-                        <ul>
-                            <li>Ambulance: 108</li>
-                            <li>Police: 100</li>
-                            <li>Fire: 101</li>
-                            <li>Women Helpline: 1091</li>
-                        </ul>
-                    </li>
-                </ol>
-            </div>
-        </body>
-        </html>
+        <h2>🚨 EMERGENCY ALERT: {user_name}</h2>
+        <p><b>Time:</b> {current_time}</p>
+        <p><b>Message:</b> {message}</p>
+        {"<p><b>Address:</b> " + address_info + "</p>" if address_info else ""}
+        {"<p><b>Accuracy:</b> " + accuracy_info + "</p>" if accuracy_info else ""}
+        {"<a href='" + maps_link + "'>📍 View Location</a>" if maps_link else ""}
         """
 
-        # ---------- SAME TEXT ----------
+        # TEXT VERSION
         text_content = f"""
-        EMERGENCY ALERT: {user_name}
+        EMERGENCY ALERT for {user_name}
         Time: {current_time}
         Message: {message}
-        {f'Latitude: {latitude}' if latitude else ''}
-        {f'Longitude: {longitude}' if longitude else ''}
-        {f'Address: {address_info}' if address_info else ''}
-        {accuracy_info}
-        {maps_link}
+        {address_info}
+        Location: {maps_link}
         """
 
-        # ---------- SAME MAP ATTACHMENT ----------
-        attachments = []
+        # OPTIONAL MAP ATTACHMENT
+        attachment_data = None
         map_path = create_location_map(latitude, longitude, user_name, accuracy) if latitude and longitude else None
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"🚨 EMERGENCY ALERT - {user_name}"
-        msg["From"] = smtp_user
-        msg["To"] = email
-        
-        msg.attach(MIMEText(text_content, "plain"))
-        msg.attach(MIMEText(html_content, "html"))
-        
-        
+
         if map_path and os.path.exists(map_path):
             with open(map_path, "rb") as f:
-                img = MIMEImage(f.read(), _subtype="png")
-                img.add_header(
-                    "Content-Disposition",
-                    f'attachment; filename="{os.path.basename(map_path)}"'
-                )
-                msg.attach(img)
+                attachment_data = base64.b64encode(f.read()).decode("utf-8")
 
+        email_payload = sib_api_v3_sdk.SendSmtpEmail(
+            sender={"email": "womencare@smtp-brevo.com", "name": "WomenCare"},
+            to=[{"email": email}],
+            subject=f"🚨 EMERGENCY ALERT - {user_name}",
+            html_content=html_content,
+            text_content=text_content,
+            attachment=[{
+                "name": os.path.basename(map_path),
+                "content": attachment_data
+            }] if attachment_data else None
+        )
 
-        # ---------- SEND VIA BREVO SMTP ----------
-        server = smtplib.SMTP(smtp_host, smtp_port)
-        server.starttls()
-        server.login(smtp_user, smtp_pass)
-        server.sendmail(smtp_user, [email], msg.as_string())
-        server.quit()
+        api_instance.send_transac_email(email_payload)
 
-        logger.info(f"SOS Email sent via Brevo SMTP → {email}")
+        logger.info(f"SOS Email sent (Brevo API) → {email}")
         return True
 
-    except Exception as e:
-        logger.error(f"Brevo SMTP Error: {str(e)}")
+    except ApiException as e:
+        logger.error(f"Brevo API Error: {str(e)}")
         return False
+    except Exception as e:
+        logger.error(f"Unknown error sending Brevo email: {str(e)}")
+        return False
+
 
 
 def send_emergency_sms(phone, user_name, message, latitude=None, longitude=None, accuracy=None):
