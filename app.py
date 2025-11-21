@@ -148,15 +148,10 @@ TWILIO_CONFIG = {
     'phone_number': os.getenv('TWILIO_PHONE_NUMBER')
 }
 
-EMAIL_CONFIG = {
-    'user': os.getenv('EMAIL_USER'),
-    'password': os.getenv('EMAIL_PASSWORD'),
-    'server': os.getenv('SMTP_SERVER', 'smtp.gmail.com'),
-    'port': int(os.getenv('SMTP_PORT', 587))
-}
+
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
-RESEND_FROM = os.getenv("RESEND_FROM", "WomenCare <noreply@your-domain.com>")
+RESEND_FROM = os.getenv("RESEND_FROM", "WomenCare <onboarding@resend.dev>")
 
 
 Maps_API_KEY = os.getenv('Maps_API_KEY')
